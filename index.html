@@ -667,9 +667,11 @@ button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px soli
       <label for="problem">Что должно получиться?</label>
       <textarea id="problem" name="problem" required maxlength="3000" aria-describedby="problem-help" placeholder="Например: хотим, чтобы клиенты видели каталог, оформляли заказы и проверяли их статус без звонка менеджеру."></textarea>
       <p class="field-help" id="problem-help">Для кого решение? Как работает сейчас? Что хотите улучшить?</p>
-      <div class="form-row"><div><label for="client-name">Как к вам обращаться <small>· необязательно</small></label><input id="client-name" name="name" autocomplete="name" maxlength="100" placeholder="Ваше имя"></div><div><label for="contact-detail">Контакт <small>· необязательно</small></label><input id="contact-detail" name="contact" maxlength="200" placeholder="Email, телефон или Telegram"></div></div>
-      <button class="btn" type="submit">Скачать описание задачи <span aria-hidden="true">↓</span></button>
-      <p class="note">Демо-версия: описание сохранится в текстовый файл на вашем устройстве. Данные никуда не отправляются.</p>
+      <div class="form-row"><div><label for="client-name">Как к вам обращаться <small>· необязательно</small></label><input id="client-name" name="name" autocomplete="name" maxlength="100" placeholder="Ваше имя"></div><div><label for="contact-detail">Контакт <small>· для ответа на заявку</small></label><input id="contact-detail" name="contact" maxlength="200" placeholder="Email, телефон или Telegram"></div></div>
+      <div style="position:absolute;left:-10000px" aria-hidden="true"><label for="website">Оставьте пустым</label><input id="website" name="website" tabindex="-1" autocomplete="off"></div>
+      <button class="btn" id="send-request" type="submit">Отправить заявку <span aria-hidden="true">↗</span></button>
+      <button class="btn" id="download-brief" type="button" style="margin-top:12px;background:transparent;color:var(--ink);border:1px solid var(--line)">Скачать описание задачи <span aria-hidden="true">↓</span></button>
+      <p class="note">Нажимая «Отправить заявку», вы передаёте описание и контакт команде «По делу» через Telegram. Скачивание сохраняет файл только на вашем устройстве.</p>
       <div class="status" id="status" role="status" aria-live="polite"></div>
     </form>
   </section>
@@ -807,8 +809,9 @@ document.querySelectorAll('[data-idea]').forEach(link => {
 const form = document.getElementById('brief');
 form.addEventListener('input', () => { problem.setCustomValidity(''); status.textContent = ''; });
 form.addEventListener('change', () => { status.textContent = ''; });
-form.addEventListener('submit', event => {
+document.getElementById('download-brief').addEventListener('click', event => {
   event.preventDefault();
+  contactInput.setCustomValidity('');
   if (!problem.value.trim() || problem.value === lastSuggestion) {
     problem.setCustomValidity('Расскажите немного о вашей задаче: для кого решение и что должно измениться.');
     problem.reportValidity();
@@ -847,6 +850,47 @@ form.addEventListener('submit', event => {
   } finally {
     if (link) link.remove();
     if (url) setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+});
+
+let sending = false;
+const contactInput = document.getElementById('contact-detail');
+contactInput.addEventListener('input', () => contactInput.setCustomValidity(''));
+form.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (sending) return;
+  if (problem.value.trim().length < 10 || problem.value === lastSuggestion) {
+    problem.setCustomValidity('Опишите задачу подробнее: минимум 10 символов.');
+    problem.reportValidity(); return;
+  }
+  problem.setCustomValidity('');
+  contactInput.setCustomValidity(contactInput.value.trim() ? '' : 'Укажите email, телефон или Telegram для ответа.');
+  if (!form.reportValidity()) return;
+  const payload = {
+    direction:direction.value, problem:problem.value.trim(),
+    name:document.getElementById('client-name').value.trim(),
+    contact:contactInput.value.trim(), website:document.getElementById('website').value
+  };
+  const button = document.getElementById('send-request');
+  const previous = button.innerHTML;
+  sending = true; button.disabled = true; form.setAttribute('aria-busy','true');
+  button.textContent = 'Отправляем…';
+  status.textContent = 'Передаём заявку…';
+  try {
+    const response = await fetch('/api/submit-idea', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload), signal:AbortSignal.timeout(15000)
+    });
+    const result = await response.json();
+    if (!response.ok || result.ok !== true) throw new Error(result.error || 'Не удалось отправить заявку. Сохраните описание и попробуйте позже.');
+    status.textContent = 'Заявка отправлена команде «По делу». Ответим по указанному контакту. Номер: '+result.id;
+  } catch(error) {
+    status.textContent = error.name === 'TimeoutError' || error instanceof TypeError
+      ? 'Не удалось подтвердить доставку. Заявка могла прийти; повтор может создать дубль. Ваш текст сохранён в форме.'
+      : error.message;
+  } finally {
+    sending = false; button.disabled = false; button.innerHTML = previous;
+    form.removeAttribute('aria-busy');
   }
 });
 
